@@ -254,6 +254,7 @@ const Dashboard = () => {
   // Fetch all data
   const fetchAllData = async () => {
     try {
+      setLoading(true);
       const [
         dailyRes,
         weeklyRes,
@@ -263,7 +264,7 @@ const Dashboard = () => {
         cameraRes,
         hourlyRes,
         classesRes
-      ] = await Promise.all([
+      ] = await Promise.allSettled([
         axios.get(`http://localhost:8000/api/detection-stats/daily?model=${selectedModel}`),
         axios.get(`http://localhost:8000/api/detection-stats/weekly?model=${selectedModel}`),
         axios.get('http://localhost:8000/api/detection-stats/summary'),
@@ -275,37 +276,80 @@ const Dashboard = () => {
       ]);
 
       // Process daily data
-      setDailyData(dailyRes.data.map(item => ({
-        ...item,
-        hour: format(parseISO(item.timestamp), 'HH:mm'),
-        count: parseInt(item.count)
-      })));
+      if (dailyRes.status === 'fulfilled') {
+        setDailyData(dailyRes.value.data.map(item => ({
+          ...item,
+          hour: format(parseISO(item.timestamp), 'HH:mm'),
+          count: parseInt(item.count)
+        })));
+      } else {
+        console.error('Error fetching daily data:', dailyRes.reason);
+        setDailyData([]);
+      }
 
       // Process weekly data
-      setWeeklyData(weeklyRes.data.map(item => ({
-        ...item,
-        date: format(parseISO(item.date), 'MMM dd'),
-        count: parseInt(item.count)
-      })));
+      if (weeklyRes.status === 'fulfilled') {
+        setWeeklyData(weeklyRes.value.data.map(item => ({
+          ...item,
+          date: format(parseISO(item.date), 'MMM dd'),
+          count: parseInt(item.count)
+        })));
+      } else {
+        console.error('Error fetching weekly data:', weeklyRes.reason);
+        setWeeklyData([]);
+      }
 
-      setStats(statsRes.data);
-      setRealTimeStats(realTimeRes.data);
+      if (statsRes.status === 'fulfilled') {
+        setStats(statsRes.value.data);
+      } else {
+        console.error('Error fetching stats:', statsRes.reason);
+        setStats({ totalDetections: 0, objectDetections: 0, segmentations: 0, poseEstimations: 0 });
+      }
+
+      if (realTimeRes.status === 'fulfilled') {
+        setRealTimeStats(realTimeRes.value.data);
+      } else {
+        console.error('Error fetching real-time stats:', realTimeRes.reason);
+        setRealTimeStats({ detectionRate: [], activeCameras: 0, latestDetections: [] });
+      }
       
       // Calculate percentages for pie chart
-      const total = topClassesRes.data.reduce((sum, item) => sum + item.count, 0);
-      setTopClasses(topClassesRes.data.map(item => ({
-        ...item,
-        percentage: ((item.count / total) * 100).toFixed(1)
-      })));
+      if (topClassesRes.status === 'fulfilled') {
+        const total = topClassesRes.value.data.reduce((sum, item) => sum + item.count, 0);
+        setTopClasses(topClassesRes.value.data.map(item => ({
+          ...item,
+          percentage: total > 0 ? ((item.count / total) * 100).toFixed(1) : '0'
+        })));
+      } else {
+        console.error('Error fetching top classes:', topClassesRes.reason);
+        setTopClasses([]);
+      }
 
-      setCameraPerformance(cameraRes.data);
-      setHourlyPattern(hourlyRes.data);
-      setClassOptions(classesRes.data);
+      if (cameraRes.status === 'fulfilled') {
+        setCameraPerformance(cameraRes.value.data);
+      } else {
+        console.error('Error fetching camera performance:', cameraRes.reason);
+        setCameraPerformance([]);
+      }
+
+      if (hourlyRes.status === 'fulfilled') {
+        setHourlyPattern(hourlyRes.value.data);
+      } else {
+        console.error('Error fetching hourly pattern:', hourlyRes.reason);
+        setHourlyPattern([]);
+      }
+
+      if (classesRes.status === 'fulfilled') {
+        setClassOptions(classesRes.value.data);
+      } else {
+        console.error('Error fetching classes:', classesRes.reason);
+        setClassOptions([]);
+      }
       
       // Trigger animation on data load
       setAnimationKey(prev => prev + 1);
     } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+      console.error('Unexpected error fetching dashboard data:', error);
     } finally {
       setLoading(false);
     }

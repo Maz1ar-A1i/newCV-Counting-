@@ -164,8 +164,17 @@ const Settings = () => {
         await axios.put(`http://localhost:8000/api/cameras/${editingCamera.id}`, cameraData);
         showSnackbar('Camera updated successfully');
       } else {
-        await axios.post('http://localhost:8000/api/create_camera', cameraData);
-        showSnackbar('Camera added successfully');
+        const response = await axios.post('http://localhost:8000/api/create_camera', cameraData, {
+          timeout: 10000,
+          validateStatus: (status) => status < 500 // Don't throw on 4xx errors
+        });
+        
+        if (response.status === 200 || response.status === 201) {
+          showSnackbar('Camera added successfully');
+        } else {
+          showSnackbar(response.data?.detail || 'Error adding camera', 'error');
+          return; // Don't close dialog on error
+        }
       }
       
       handleCloseDialog();
@@ -173,7 +182,21 @@ const Settings = () => {
       
     } catch (error) {
       console.error('Error saving camera:', error);
-      showSnackbar(error.response?.data?.detail || 'Error saving camera', 'error');
+      let errorMessage = 'Error saving camera';
+      
+      if (error.response) {
+        // Backend responded with error
+        errorMessage = error.response.data?.detail || error.response.data?.message || `Server error: ${error.response.status}`;
+      } else if (error.request) {
+        // Request made but no response
+        errorMessage = 'No response from server. Please check if the backend is running.';
+      } else if (error.code === 'ECONNABORTED') {
+        errorMessage = 'Request timeout. Please try again.';
+      } else {
+        errorMessage = error.message || 'Unknown error occurred';
+      }
+      
+      showSnackbar(errorMessage, 'error');
     }
   };
 

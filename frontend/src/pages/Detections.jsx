@@ -46,11 +46,19 @@ const Detections = () => {
         params: {
           limit: 100,
           offset: 0
-        }
+        },
+        timeout: 10000 // 10 second timeout
       });
       setDetections(response.data || []);
     } catch (error) {
       console.error('Error fetching detections:', error);
+      if (error.code === 'ECONNABORTED') {
+        console.error('Request timeout - backend may not be running');
+      } else if (error.response) {
+        console.error('Backend error:', error.response.status, error.response.data);
+      } else if (error.request) {
+        console.error('No response from backend - check if server is running');
+      }
       setDetections([]);
     } finally {
       setLoading(false);

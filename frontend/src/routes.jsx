@@ -5,6 +5,8 @@ import Dashboard from './pages/Dashboard';
 import LiveAnalysis from './pages/LiveAnalysis';
 import Settings from './pages/Settings';
 import Detections from './pages/Detections';
+import DwellTime from './pages/DwellTime';
+import ZoneCounting from './pages/ZoneCounting';
 
 const AppRoutes = () => {
     return (
@@ -13,6 +15,8 @@ const AppRoutes = () => {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/live-analysis" element={<LiveAnalysis />} />
             <Route path="/detections" element={<Detections />} />
+            <Route path="/dwell-time" element={<DwellTime />} />
+            <Route path="/zone-counting" element={<ZoneCounting />} />
             <Route path="/settings" element={<Settings />} />
         </Routes>
     );

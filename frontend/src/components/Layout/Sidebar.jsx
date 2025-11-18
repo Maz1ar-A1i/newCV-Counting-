@@ -22,6 +22,8 @@ import {
   Brightness7,
   ChevronLeft,
   ChevronRight,
+  AccessTime,
+  Map,
 } from '@mui/icons-material';
 import { useLocation, useNavigate } from 'react-router-dom';
 import logo from '../../assets/nielsen-ai-logo.avif';
@@ -34,6 +36,8 @@ const menuItems = [
   { text: 'Dashboard', icon: <Dashboard />, path: '/dashboard' },
   { text: 'Live Analysis', icon: <Videocam />, path: '/live-analysis' },
   { text: 'Detections', icon: <Science />, path: '/detections' },
+  { text: 'Dwell Time', icon: <AccessTime />, path: '/dwell-time' },
+  { text: 'Zone Counting', icon: <Map />, path: '/zone-counting' },
   { text: 'Settings', icon: <Settings />, path: '/settings' },
 ];
 

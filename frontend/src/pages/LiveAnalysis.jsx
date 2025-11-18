@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import {
     Box,
@@ -24,7 +24,14 @@ import {
     ToggleButtonGroup,
     Divider,
     Switch,
-    FormGroup
+    FormGroup,
+    List,
+    ListItem,
+    ListItemText,
+    Avatar,
+    TextField,
+    Stack,
+    Tooltip,
 } from '@mui/material';
 import { styled, alpha, useTheme } from '@mui/material/styles';
 import { 
@@ -37,7 +44,20 @@ import {
     Speed,
     CheckCircle
 } from '@mui/icons-material';
-import { Camera, Play, Pause, Eye, User, Scan } from '@phosphor-icons/react';
+import { 
+    Camera, 
+    Play, 
+    Pause, 
+    Eye, 
+    User, 
+    Scan,
+    Trash,
+    ArrowCounterClockwise,
+    ArrowClockwise,
+    ChartLine,
+    Timer as TimerIcon,
+    UsersThree
+} from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // Styled components
@@ -212,23 +232,67 @@ const LiveAnalysis = () => {
     
     // Add this state to track if we're actively streaming
     const [isStreaming, setIsStreaming] = useState(false);
-    const [activeStreams, setActiveStreams] = useState({}); // Track which model is active for each camera
+    const [selectedCameraId, setSelectedCameraId] = useState(null);
+    const [zones, setZones] = useState([]);
+    const [liveZoneStats, setLiveZoneStats] = useState({});
+    const [drawingMode, setDrawingMode] = useState(false);
+    const [draftPolygon, setDraftPolygon] = useState([]);
+    const [newZoneName, setNewZoneName] = useState('');
+    const [activeZoneId, setActiveZoneId] = useState(null);
+    const [activeZoneStats, setActiveZoneStats] = useState(null);
+    const [frameMeta, setFrameMeta] = useState({});
+    const videoRefs = useRef({});
+
+    const API_BASE = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+
+    const fetchZones = useCallback(async () => {
+        if (!selectedCameraId) {
+            setZones([]);
+            return;
+        }
+        try {
+            const { data } = await axios.get(`${API_BASE}/zones`, {
+                params: { camera_id: selectedCameraId }
+            });
+            setZones(data);
+            if (activeZoneId && !data.find((zone) => zone.zone_id === activeZoneId)) {
+                setActiveZoneId(null);
+            }
+        } catch (error) {
+            console.error('Error fetching zones', error);
+        }
+    }, [API_BASE, selectedCameraId, activeZoneId]);
+
+    const fetchLiveZones = useCallback(async () => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/zones/live`);
+            const liveMap = {};
+            data.forEach((item) => {
+                liveMap[item.zone.zone_id] = item.live;
+            });
+            setLiveZoneStats(liveMap);
+        } catch (error) {
+            console.error('Error fetching live zone stats', error);
+        }
+    }, [API_BASE]);
 
     // Modify the useEffect to check existing streams when mounting
     useEffect(() => {
-        const checkExistingStreams = async () => {
+                const checkExistingStreams = async () => {
             try {
                 // Fetch cameras first
-                const response = await axios.get('http://localhost:8000/api/cameras');
-                const liveCameras = response.data.filter(camera => 
-                    camera.stream_type.toLowerCase() === 'live'
-                );
+                const response = await axios.get(`${API_BASE}/api/cameras`);
+                // Include both local 'live' cameras and RTSP cameras
+                const liveCameras = response.data.filter(camera => {
+                    const st = (camera.stream_type || '').toLowerCase();
+                    return st === 'live' || st === 'rtsp';
+                });
                 
                 // Check if any streams are active by attempting to fetch frames
                 const camerasWithStreamStatus = await Promise.all(liveCameras.map(async (camera) => {
                     try {
                         const frameResponse = await axios.get(
-                            `http://localhost:8000/process_frame/${camera.id}`,
+                            `${API_BASE}/process_frame/${camera.id}`,
                             { responseType: 'blob' }
                         );
                         // If we get a successful response, the stream is active
@@ -257,6 +321,43 @@ const LiveAnalysis = () => {
         checkExistingStreams();
     }, []);
 
+    useEffect(() => {
+        fetchZones();
+    }, [fetchZones]);
+
+    useEffect(() => {
+        fetchLiveZones();
+        const interval = setInterval(fetchLiveZones, 3000);
+        return () => clearInterval(interval);
+    }, [fetchLiveZones]);
+
+    useEffect(() => {
+        setDraftPolygon([]);
+        setDrawingMode(false);
+    }, [selectedCameraId]);
+
+    useEffect(() => {
+        if (!selectedCameraId && cameras.length > 0) {
+            setSelectedCameraId(cameras[0].id);
+        }
+    }, [cameras, selectedCameraId]);
+
+    useEffect(() => {
+        if (!activeZoneId) {
+            setActiveZoneStats(null);
+            return;
+        }
+        const loadStats = async () => {
+            try {
+                const { data } = await axios.get(`${API_BASE}/zones/${activeZoneId}/stats`);
+                setActiveZoneStats(data);
+            } catch (error) {
+                console.error('Error fetching zone stats', error);
+            }
+        };
+        loadStats();
+    }, [API_BASE, activeZoneId]);
+
     // Modify the frame fetching useEffect
     useEffect(() => {
         const intervals = {};
@@ -267,7 +368,7 @@ const LiveAnalysis = () => {
                 intervals[camera.id] = setInterval(async () => {
                     try {
                         const response = await axios.get(
-                            `http://localhost:8000/process_frame/${camera.id}`,
+                            `${API_BASE}/process_frame/${camera.id}`,
                             { responseType: 'blob' }
                         );
                         
@@ -312,7 +413,7 @@ const LiveAnalysis = () => {
         try {
             // Start all cameras with selected model
             await Promise.all(cameras.map(async (camera) => {
-                await axios.post(`http://localhost:8000/start_camera_stream/${camera.id}`, {
+                await axios.post(`${API_BASE}/start_camera_stream/${camera.id}`, {
                     model_type: selectedModel,
                 });
             }));
@@ -333,7 +434,7 @@ const LiveAnalysis = () => {
         try {
             // Stop all cameras
             await Promise.all(cameras.map(async (camera) => {
-                await axios.post(`http://localhost:8000/stop_camera_stream/${camera.id}`);
+            await axios.post(`${API_BASE}/stop_camera_stream/${camera.id}`);
             }));
             
             const updatedCameras = cameras.map(camera => ({
@@ -349,9 +450,12 @@ const LiveAnalysis = () => {
         }
     };
 
+    const zoneColorPalette = ['#FF5C8D', '#06b6d4', '#34d399', '#f97316', '#a855f7', '#f97316'];
+    const pickZoneColor = () => zoneColorPalette[Math.floor(Math.random() * zoneColorPalette.length)];
+
     const startSingleCamera = async (cameraId) => {
         try {
-            await axios.post(`http://localhost:8000/start_camera_stream/${cameraId}`, {
+            await axios.post(`${API_BASE}/start_camera_stream/${cameraId}`, {
                 model_type: selectedModel,
             });
             
@@ -373,7 +477,7 @@ const LiveAnalysis = () => {
 
     const stopSingleCamera = async (cameraId) => {
         try {
-            await axios.post(`http://localhost:8000/stop_camera_stream/${cameraId}`);
+            await axios.post(`${API_BASE}/stop_camera_stream/${cameraId}`);
             
             const updatedCameras = cameras.map(camera => ({
                 ...camera,
@@ -387,6 +491,129 @@ const LiveAnalysis = () => {
             console.error(`Error stopping camera ${cameraId} stream:`, error);
         }
     };
+
+    const handleFrameLoad = (cameraId, event) => {
+        const { naturalWidth, naturalHeight } = event.target;
+        if (!naturalWidth || !naturalHeight) {
+            return;
+        }
+        setFrameMeta(prev => ({
+            ...prev,
+            [cameraId]: {
+                width: naturalWidth,
+                height: naturalHeight
+            }
+        }));
+    };
+
+    const handleStartDrawing = () => {
+        if (!selectedCameraId) return;
+        setDrawingMode(true);
+        setDraftPolygon([]);
+    };
+
+    const handleCancelDrawing = () => {
+        setDrawingMode(false);
+        setDraftPolygon([]);
+        setNewZoneName('');
+    };
+
+    const handleOverlayClick = (event, cameraId) => {
+        if (!drawingMode || cameraId !== selectedCameraId) {
+            return;
+        }
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const frame = frameMeta[cameraId];
+        if (!frame) {
+            return;
+        }
+        const relX = event.clientX - bounds.left;
+        const relY = event.clientY - bounds.top;
+        const x = Number(((relX / bounds.width) * frame.width).toFixed(2));
+        const y = Number(((relY / bounds.height) * frame.height).toFixed(2));
+        setDraftPolygon(prev => [...prev, [x, y]]);
+    };
+
+    const handleFinishDrawing = async () => {
+        if (!selectedCameraId || draftPolygon.length < 3) {
+            return;
+        }
+        const payload = {
+            camera_id: selectedCameraId,
+            name: newZoneName || `Zone ${zones.length + 1}`,
+            polygon: draftPolygon,
+            color: pickZoneColor(),
+            attribution_mode: 'multiple',
+            properties: { created_from: 'ui' }
+        };
+        try {
+            await axios.post(`${API_BASE}/zones`, payload);
+            setDrawingMode(false);
+            setDraftPolygon([]);
+            setNewZoneName('');
+            fetchZones();
+        } catch (error) {
+            console.error('Error saving zone', error);
+        }
+    };
+
+    const handleZoneDelete = async (zoneId) => {
+        try {
+            await axios.delete(`${API_BASE}/zones/${zoneId}`);
+            if (activeZoneId === zoneId) {
+                setActiveZoneId(null);
+            }
+            fetchZones();
+        } catch (error) {
+            console.error('Failed to delete zone', error);
+        }
+    };
+
+    const handleUndo = async () => {
+        try {
+            await axios.post(`${API_BASE}/zones/undo`);
+            fetchZones();
+        } catch (error) {
+            console.error('Nothing to undo', error);
+        }
+    };
+
+    const handleRedo = async () => {
+        try {
+            await axios.post(`${API_BASE}/zones/redo`);
+            fetchZones();
+        } catch (error) {
+            console.error('Nothing to redo', error);
+        }
+    };
+
+    const handleZoneSelect = (zoneId) => {
+        setActiveZoneId(zoneId);
+    };
+
+    const handleCameraSelection = (event) => {
+        const value = event.target.value;
+        setSelectedCameraId(value === '' ? null : Number(value));
+        setActiveZoneId(null);
+    };
+
+    const getDraftPolylinePoints = (cameraId) => {
+        const node = videoRefs.current[cameraId];
+        const frame = frameMeta[cameraId];
+        if (!node || !frame || draftPolygon.length === 0) {
+            return '';
+        }
+        const rect = node.getBoundingClientRect();
+        return draftPolygon
+            .map(([x, y]) => {
+                const px = (x / frame.width) * rect.width;
+                const py = (y / frame.height) * rect.height;
+                return `${px},${py}`;
+            })
+            .join(' ');
+    };
+
+    const activeLive = activeZoneId ? (liveZoneStats[activeZoneId] || { count: 0, objects: [] }) : null;
 
     return (
         <StyledContainer maxWidth="xl">
@@ -478,176 +705,378 @@ const LiveAnalysis = () => {
                 </Box>
 
 
-                {/* Camera Grid */}
-                <Grid container spacing={3} sx={{ minHeight: '600px' }}>
-                    {cameras.length === 0 ? (
-                        <Grid item xs={12}>
-                            <Paper sx={{
-                                p: 8,
-                                textAlign: 'center',
-                                background: isDark
-                                    ? alpha(theme.palette.background.paper, 0.03)
-                                    : 'rgba(255, 255, 255, 0.7)',
-                                backdropFilter: 'blur(20px)',
-                                border: `1px solid ${alpha(theme.palette.divider, isDark ? 0.08 : 0.12)}`,
-                                borderRadius: 3,
-                            }}>
-                                <Camera size={64} color="#06b6d4" weight="duotone" />
-                                <Typography variant="h5" sx={{ mt: 3, mb: 2, fontWeight: 600 }}>
-                                    No Cameras Found
-                                </Typography>
-                                <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-                                    Add cameras in the settings to start live analysis
-                                </Typography>
-                                <Button
-                                    variant="contained"
-                                    onClick={() => window.location.href = '/settings'}
-                                    startIcon={<Camera size={20} />}
-                                    sx={{
-                                        background: isDark
-                                            ? 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)'
-                                            : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
-                                        borderRadius: 2,
-                                        px: 4,
-                                        py: 1.5,
-                                        textTransform: 'none',
-                                        fontWeight: 600,
-                                    }}
+                <Grid container spacing={3}>
+                    <Grid item xs={12} md={4}>
+                        {/* Zone control panel */}
+                        <Paper sx={{
+                            p: 3,
+                            borderRadius: 3,
+                            background: isDark ? alpha(theme.palette.background.paper, 0.08) : alpha('#ffffff', 0.95),
+                            border: `1px solid ${alpha(theme.palette.divider, 0.1)}`
+                        }}>
+                            <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                                Zone Controls
+                            </Typography>
+                            <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+                                <InputLabel id="zone-camera-select">Camera</InputLabel>
+                                <Select
+                                    labelId="zone-camera-select"
+                                    value={selectedCameraId ?? ''}
+                                    label="Camera"
+                                    onChange={handleCameraSelection}
                                 >
-                                    Go to Settings
-                                </Button>
-                            </Paper>
-                        </Grid>
-                    ) : (
-                    cameras.map((camera) => (
-                        <Grid item xs={12} md={6} key={camera.id}>
-                            <VideoContainer sx={{ height: '400px' }}>
-                                {camera.isStreaming ? (
-                                    <>
-                                        <Box sx={{
-                                            position: 'relative',
-                                            width: '100%',
-                                            height: '100%',
-                                            borderRadius: 2,
-                                            overflow: 'hidden',
-                                        }}>
-                                            <motion.img
-                                                src={camera.videoSrc || 'path/to/default/image.jpg'}
-                                                alt={`Stream from ${camera.source_name}`}
-                                                style={{ 
-                                                    width: '100%',
-                                                    height: '100%',
-                                                    objectFit: 'cover'
-                                                }}
-                                                initial={{ opacity: 0 }}
-                                                animate={{ opacity: 1 }}
-                                                transition={{ duration: 0.3 }}
-                                            />
-                                            
-                                            {/* Camera info overlay - top */}
-                                            <Box sx={{
-                                                position: 'absolute',
-                                                top: 0,
-                                                left: 0,
-                                                right: 0,
-                                                padding: 2,
-                                                background: 'linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%)',
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
+                                    <MenuItem value="" disabled>
+                                        Select camera
+                                    </MenuItem>
+                                    {cameras.map((camera) => (
+                                        <MenuItem key={camera.id} value={camera.id}>
+                                            {camera.source_name || `Camera ${camera.id}`}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                            <TextField
+                                label="Zone name"
+                                size="small"
+                                fullWidth
+                                value={newZoneName}
+                                onChange={(event) => setNewZoneName(event.target.value)}
+                                sx={{ mb: 2 }}
+                            />
+                            <Stack spacing={1}>
+                                <Stack direction="row" spacing={1}>
+                                    <Button variant="outlined" onClick={handleStartDrawing} disabled={!selectedCameraId}>
+                                        Draw
+                                    </Button>
+                                    <Button variant="contained" onClick={handleFinishDrawing} disabled={draftPolygon.length < 3}>
+                                        Save
+                                    </Button>
+                                    <Button variant="text" onClick={handleCancelDrawing} disabled={!drawingMode && draftPolygon.length === 0}>
+                                        Cancel
+                                    </Button>
+                                </Stack>
+                                <Stack direction="row" spacing={1}>
+                                    <Button startIcon={<ArrowCounterClockwise size={16} />} onClick={handleUndo}>
+                                        Undo
+                                    </Button>
+                                    <Button startIcon={<ArrowClockwise size={16} />} onClick={handleRedo}>
+                                        Redo
+                                    </Button>
+                                </Stack>
+                            </Stack>
+                            {drawingMode && (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                                    Click on the live feed to place vertices ({draftPolygon.length})
+                                </Typography>
+                            )}
+                            <Divider sx={{ my: 2 }} />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+                                Zones ({zones.length})
+                            </Typography>
+                            {zones.length === 0 ? (
+                                <Typography variant="body2" color="text.secondary">
+                                    No zones for this camera yet.
+                                </Typography>
+                            ) : (
+                                <List dense>
+                                    {zones.map((zone) => {
+                                        const live = liveZoneStats[zone.zone_id] || { count: 0, objects: [] };
+                                        return (
+                                            <ListItem
+                                                button
+                                                key={zone.zone_id}
+                                                selected={zone.zone_id === activeZoneId}
+                                                onClick={() => handleZoneSelect(zone.zone_id)}
+                                                sx={{ borderRadius: 2, mb: 1, cursor: 'pointer' }}
+                                            >
+                                                <Avatar sx={{ bgcolor: zone.color, width: 32, height: 32, fontSize: 14, mr: 1 }}>
+                                                    {zone.name.slice(0, 2).toUpperCase()}
+                                                </Avatar>
+                                                <ListItemText
+                                                    primary={zone.name}
+                                                    secondary={`Mode: ${zone.attribution_mode} • ${live.count} inside`}
+                                                />
+                                                <Tooltip title="Delete zone">
+                                                    <IconButton
+                                                        size="small"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation();
+                                                            handleZoneDelete(zone.zone_id);
+                                                        }}
+                                                    >
+                                                        <Trash size={16} />
+                                                    </IconButton>
+                                                </Tooltip>
+                                            </ListItem>
+                                        );
+                                    })}
+                                </List>
+                            )}
+                            {activeZoneStats && (
+                                <Box sx={{ mt: 2, p: 2, borderRadius: 2, backgroundColor: alpha('#0ea5e9', 0.08) }}>
+                                    <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <ChartLine size={16} />
+                                        Historical Stats
+                                    </Typography>
+                                    <Grid container spacing={1}>
+                                        <Grid item xs={4}>
+                                            <Typography variant="caption" color="text.secondary">Entries</Typography>
+                                            <Typography variant="h6">{activeZoneStats.entries_count}</Typography>
+                                        </Grid>
+                                        <Grid item xs={4}>
+                                            <Typography variant="caption" color="text.secondary">Avg Dwell (s)</Typography>
+                                            <Typography variant="h6">{Math.round(activeZoneStats.average_dwell_seconds || 0)}</Typography>
+                                        </Grid>
+                                        <Grid item xs={4}>
+                                            <Typography variant="caption" color="text.secondary">Presence (s)</Typography>
+                                            <Typography variant="h6">{Math.round(activeZoneStats.total_presence_seconds || 0)}</Typography>
+                                        </Grid>
+                                    </Grid>
+                                    <Typography variant="caption" color="text.secondary">
+                                        Live count: {activeZoneStats.live_count}
+                                    </Typography>
+                                </Box>
+                            )}
+                            {activeLive && (
+                                <Box sx={{ mt: 2 }}>
+                                    <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <UsersThree size={16} />
+                                        Live Presence ({activeLive.count})
+                                    </Typography>
+                                    {activeLive.objects.length === 0 ? (
+                                        <Typography variant="body2" color="text.secondary">
+                                            No tracked objects inside right now.
+                                        </Typography>
+                                    ) : (
+                                        <Stack spacing={1}>
+                                            {activeLive.objects.map((obj) => (
+                                                <Box key={obj.event_id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1, borderRadius: 1, backgroundColor: alpha('#ffffff', isDark ? 0.04 : 0.6) }}>
+                                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                                        {obj.object_id}
+                                                    </Typography>
+                                                    <Typography variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                                        <TimerIcon size={14} />
+                                                        {Math.round(obj.dwell_seconds)}s
+                                                    </Typography>
+                                                </Box>
+                                            ))}
+                                        </Stack>
+                                    )}
+                                </Box>
+                            )}
+                        </Paper>
+                    </Grid>
+                    <Grid item xs={12} md={8}>
+                        <Grid container spacing={3} sx={{ minHeight: '600px' }}>
+                            {cameras.length === 0 ? (
+                                <Grid item xs={12}>
+                                    <Paper sx={{
+                                        p: 8,
+                                        textAlign: 'center',
+                                        background: isDark
+                                            ? alpha(theme.palette.background.paper, 0.03)
+                                            : 'rgba(255, 255, 255, 0.7)',
+                                        backdropFilter: 'blur(20px)',
+                                        border: `1px solid ${alpha(theme.palette.divider, isDark ? 0.08 : 0.12)}`,
+                                        borderRadius: 3,
+                                    }}>
+                                        <Camera size={64} color="#06b6d4" weight="duotone" />
+                                        <Typography variant="h5" sx={{ mt: 3, mb: 2, fontWeight: 600 }}>
+                                            No Cameras Found
+                                        </Typography>
+                                        <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
+                                            Add cameras in the settings to start live analysis
+                                        </Typography>
+                                        <Button
+                                            variant="contained"
+                                            onClick={() => window.location.href = '/settings'}
+                                            startIcon={<Camera size={20} />}
+                                            sx={{
+                                                background: isDark
+                                                    ? 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)'
+                                                    : 'linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)',
+                                                borderRadius: 2,
+                                                px: 4,
+                                                py: 1.5,
+                                                textTransform: 'none',
+                                                fontWeight: 600,
+                                            }}
+                                        >
+                                            Go to Settings
+                                        </Button>
+                                    </Paper>
+                                </Grid>
+                            ) : (
+                            cameras.map((camera) => (
+                                <Grid item xs={12} key={camera.id}>
+                                    <VideoContainer sx={{ height: '400px' }}>
+                                        {camera.isStreaming ? (
+                                            <>
+                                                <Box 
+                                                    ref={(node) => {
+                                                        if (node) {
+                                                            videoRefs.current[camera.id] = node;
+                                                        }
+                                                    }}
+                                                    sx={{
+                                                        position: 'relative',
+                                                        width: '100%',
+                                                        height: '100%',
+                                                        borderRadius: 2,
+                                                        overflow: 'hidden',
+                                                }}>
+                                                    <motion.img
+                                                        src={camera.videoSrc || 'path/to/default/image.jpg'}
+                                                        alt={`Stream from ${camera.source_name}`}
+                                                        style={{ 
+                                                            width: '100%',
+                                                            height: '100%',
+                                                            objectFit: 'cover'
+                                                        }}
+                                                        onLoad={(event) => handleFrameLoad(camera.id, event)}
+                                                        initial={{ opacity: 0 }}
+                                                        animate={{ opacity: 1 }}
+                                                        transition={{ duration: 0.3 }}
+                                                    />
+                                                    <Box
+                                                        onClick={(event) => handleOverlayClick(event, camera.id)}
+                                                        sx={{
+                                                            position: 'absolute',
+                                                            inset: 0,
+                                                            pointerEvents: drawingMode && selectedCameraId === camera.id ? 'auto' : 'none',
+                                                            cursor: drawingMode && selectedCameraId === camera.id ? 'crosshair' : 'default',
+                                                        }}
+                                                    >
+                                                        {drawingMode && selectedCameraId === camera.id && draftPolygon.length > 0 && (
+                                                            <svg width="100%" height="100%">
+                                                                <polyline
+                                                                    points={getDraftPolylinePoints(camera.id)}
+                                                                    fill="rgba(14,165,233,0.2)"
+                                                                    stroke="#0ea5e9"
+                                                                    strokeWidth="2"
+                                                                />
+                                                                {draftPolygon.map((_, index) => {
+                                                                    const node = videoRefs.current[camera.id];
+                                                                    const frame = frameMeta[camera.id];
+                                                                    if (!node || !frame) return null;
+                                                                    const rect = node.getBoundingClientRect();
+                                                                    const [px, py] = draftPolygon[index];
+                                                                    const cx = (px / frame.width) * rect.width;
+                                                                    const cy = (py / frame.height) * rect.height;
+                                                                    return (
+                                                                        <circle key={index} cx={cx} cy={cy} r={4} fill="#0ea5e9" />
+                                                                    );
+                                                                })}
+                                                            </svg>
+                                                        )}
+                                                    </Box>
+                                                    
+                                                    {/* Camera info overlay - top */}
+                                                    <Box sx={{
+                                                        position: 'absolute',
+                                                        top: 0,
+                                                        left: 0,
+                                                        right: 0,
+                                                        padding: 2,
+                                                        background: 'linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%)',
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        alignItems: 'center',
+                                                    }}>
+                                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                            <Camera size={20} color="#06b6d4" weight="duotone" />
+                                                            <Typography sx={{
+                                                                color: 'white',
+                                                                fontSize: '1rem',
+                                                                fontWeight: 600,
+                                                                textTransform: 'capitalize'
+                                                            }}>
+                                                                {camera.source_name || `Camera ${camera.id}`}
+                                                            </Typography>
+                                                        </Box>
+                                                        <Chip
+                                                            label={modelInfo[selectedModel].title}
+                                                            size="small"
+                                                            sx={{
+                                                                backgroundColor: alpha(modelInfo[selectedModel].color, 0.2),
+                                                                color: 'white',
+                                                                border: `1px solid ${alpha(modelInfo[selectedModel].color, 0.5)}`,
+                                                                fontWeight: 500,
+                                                            }}
+                                                        />
+                                                    </Box>
+                                                    
+                                                    {/* Bottom left corner stop button */}
+                                                    <Box sx={{
+                                                        position: 'absolute',
+                                                        bottom: 16,
+                                                        left: 16,
+                                                        transition: 'opacity 0.3s',
+                                                        opacity: 0.7,
+                                                        '&:hover': {
+                                                            opacity: 1
+                                                        }
+                                                    }}>
+                                                        <IconButton
+                                                            onClick={() => stopSingleCamera(camera.id)}
+                                                            size="small"
+                                                            sx={{
+                                                                backgroundColor: 'rgba(239, 68, 68, 0.9)',
+                                                                backdropFilter: 'blur(8px)',
+                                                                color: 'white',
+                                                                '&:hover': {
+                                                                    backgroundColor: 'rgba(220, 38, 38, 0.95)',
+                                                                    transform: 'scale(1.1)'
+                                                                },
+                                                                transition: 'all 0.2s ease',
+                                                            }}
+                                                        >
+                                                            <Pause size={16} weight="bold" />
+                                                        </IconButton>
+                                                    </Box>
+                                                </Box>
+                                            </>
+                                        ) : (
+                                            <Box sx={{ 
+                                                display: 'flex', 
+                                                flexDirection: 'column', 
                                                 alignItems: 'center',
+                                                justifyContent: 'center',
+                                                height: '100%',
+                                                gap: 3,
+                                                p: 4,
+                                                textAlign: 'center'
                                             }}>
-                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                                    <Camera size={20} color="#06b6d4" weight="duotone" />
-                                                    <Typography sx={{
-                                                        color: 'white',
-                                                        fontSize: '1rem',
-                                                        fontWeight: 600,
-                                                        textTransform: 'capitalize'
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
+                                                    <Camera size={40} color="#06b6d4" weight="duotone" />
+                                                    <Typography variant="h5" sx={{ 
+                                                        color: isDark ? 'rgba(255, 255, 255, 0.9)' : theme.palette.text.primary,
+                                                        fontWeight: 700,
+                                                        textTransform: 'capitalize',
                                                     }}>
                                                         {camera.source_name || `Camera ${camera.id}`}
                                                     </Typography>
                                                 </Box>
-                                                <Chip
-                                                    label={modelInfo[selectedModel].title}
-                                                    size="small"
-                                                    sx={{
-                                                        backgroundColor: alpha(modelInfo[selectedModel].color, 0.2),
-                                                        color: 'white',
-                                                        border: `1px solid ${alpha(modelInfo[selectedModel].color, 0.5)}`,
-                                                        fontWeight: 500,
-                                                    }}
-                                                />
-                                            </Box>
-                                            
-                                            {/* Bottom left corner stop button */}
-                                            <Box sx={{
-                                                position: 'absolute',
-                                                bottom: 16,
-                                                left: 16,
-                                                transition: 'opacity 0.3s',
-                                                opacity: 0.7,
-                                                '&:hover': {
-                                                    opacity: 1
-                                                }
-                                            }}>
-                                                <IconButton
-                                                    onClick={() => stopSingleCamera(camera.id)}
-                                                    size="small"
-                                                    sx={{
-                                                        backgroundColor: 'rgba(239, 68, 68, 0.9)',
-                                                        backdropFilter: 'blur(8px)',
-                                                        color: 'white',
-                                                        '&:hover': {
-                                                            backgroundColor: 'rgba(220, 38, 38, 0.95)',
-                                                            transform: 'scale(1.1)'
-                                                        },
-                                                        transition: 'all 0.2s ease',
-                                                    }}
+                                                <ModernButton
+                                                    onClick={() => startSingleCamera(camera.id)}
+                                                    startIcon={<Play size={20} weight="bold" />}
                                                 >
-                                                    <Pause size={16} weight="bold" />
-                                                </IconButton>
+                                                    Start Stream
+                                                </ModernButton>
+                                                <Typography variant="body2" color="text.secondary" sx={{ 
+                                                    maxWidth: '80%',
+                                                    mt: 2,
+                                                    opacity: 0.8
+                                                }}>
+                                                    Click to begin real-time analysis
+                                                </Typography>
                                             </Box>
-                                        </Box>
-                                    </>
-                                ) : (
-                                    <Box sx={{ 
-                                        display: 'flex', 
-                                        flexDirection: 'column', 
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        height: '100%',
-                                        gap: 3,
-                                        p: 4,
-                                        textAlign: 'center'
-                                    }}>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                                            <Camera size={40} color="#06b6d4" weight="duotone" />
-                                            <Typography variant="h5" sx={{ 
-                                                color: isDark ? 'rgba(255, 255, 255, 0.9)' : theme.palette.text.primary,
-                                                fontWeight: 700,
-                                                textTransform: 'capitalize',
-                                            }}>
-                                                {camera.source_name || `Camera ${camera.id}`}
-                                            </Typography>
-                                        </Box>
-                                        <ModernButton
-                                            onClick={() => startSingleCamera(camera.id)}
-                                            startIcon={<Play size={20} weight="bold" />}
-                                        >
-                                            Start Stream
-                                        </ModernButton>
-                                        <Typography variant="body2" color="text.secondary" sx={{ 
-                                            maxWidth: '80%',
-                                            mt: 2,
-                                            opacity: 0.8
-                                        }}>
-                                            Click to begin real-time analysis
-                                        </Typography>
-                                    </Box>
-                                )}
-                            </VideoContainer>
+                                        )}
+                                    </VideoContainer>
+                                </Grid>
+                            )))}
                         </Grid>
-                    )))}
+                    </Grid>
                 </Grid>
             </motion.div>
         </StyledContainer>

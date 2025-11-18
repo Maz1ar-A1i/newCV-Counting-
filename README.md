@@ -11,6 +11,8 @@ A real-time AI vision processing system with camera management, object detection
 
 - **Real-time Analysis** - Process video streams with AI models (object detection, segmentation, pose estimation)
 - **Camera Management** - Monitor and control multiple camera streams
+- **Dwell Time Module** - Upload a face sample, draw custom zones, and measure dwell duration with history logs
+- **Zone-Based Counting** - Count any YOLO class per zone with entry/exit analytics and CSV/JSON exports
 - **Modern UI** - React + Vite frontend with Material-UI
 - **Fast API Backend** - RESTful endpoints and real-time processing
 - **PostgreSQL Database** - Reliable data storage
@@ -72,6 +74,46 @@ npm run dev
 - **Frontend**: http://localhost:5173
 - **Backend API**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
+
+### 6. Database Migration
+
+The dwell-time and zone-counting modules require the new tables defined in `backend/migrations/002_dwell_and_counter_tables.sql`.
+
+If you are using Docker, the migration runs automatically on first boot. For manual setups:
+
+```bash
+psql "$DATABASE_URL" -f backend/migrations/002_dwell_and_counter_tables.sql
+```
+
+> Replace `$DATABASE_URL` with the same connection string configured in `.env`.
+
+## New Modules & APIs
+
+### Dwell Time Tracking
+
+- **Frontend**: Navigate to `/dwell-time`
+- **Workflow**:
+  1. Select a camera, draw custom zones on the live feed.
+  2. Upload a face image to enroll a target and pick the zones to monitor.
+  3. Watch live timers, arrival/exit timestamps, and historical dwell logs.
+- **Key Endpoints**:
+  - `POST /dwell/targets` (multipart) – enroll a face and store embeddings
+  - `GET /dwell/live` – list active sessions with running timers
+  - `GET /dwell/sessions` – fetch dwell history (filterable by target/zone)
+
+### Multi-Object Zone Counting
+
+- **Frontend**: Navigate to `/zone-counting`
+- **Workflow**:
+  1. Draw counting zones per camera (works for any YOLO class, not just people).
+  2. View per-zone cards showing current presence + entry/exit totals per class.
+  3. Review chronological event logs and export them as CSV/JSON.
+- **Key Endpoints**:
+  - `GET /zone-counters/live` – aggregated stats + live occupancies per zone
+  - `GET /zone-counters/events` – paged, filterable event history
+  - `GET /zone-counters/export?format=csv|json` – download analytics
+
+Both modules reuse the same smooth zone-drawing tool (React + SVG overlay) and store data in PostgreSQL for durability.
 
 ## Project Structure
 
