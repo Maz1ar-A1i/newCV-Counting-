@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Dict, List, Literal, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
@@ -58,7 +59,7 @@ class ZoneResponse(ZoneBase):
 
 
 class DwellEventResponse(BaseModel):
-    event_id: str
+    event_id: UUID
     zone_id: Optional[str]
     camera_id: int
     object_id: str
@@ -71,7 +72,7 @@ class DwellEventResponse(BaseModel):
 
 
 class DwellTargetResponse(BaseModel):
-    target_id: str
+    target_id: UUID
     name: str
     camera_id: int
     zone_ids: List[str]
@@ -91,8 +92,8 @@ class DwellTargetUpdate(BaseModel):
 
 
 class DwellSessionResponse(BaseModel):
-    session_id: str
-    target_id: str
+    session_id: UUID
+    target_id: UUID
     zone_id: Optional[str]
     camera_id: int
     entry_ts: datetime
@@ -104,7 +105,7 @@ class DwellSessionResponse(BaseModel):
 
 
 class ZoneCounterEventResponse(BaseModel):
-    event_id: str
+    event_id: UUID
     zone_id: Optional[str]
     camera_id: int
     object_id: str

@@ -296,6 +296,9 @@ running = False
 # Replace the global detection_times with a nested dictionary
 detection_times = defaultdict(lambda: defaultdict(lambda: datetime.min))
 
+DWELL_TRACKER_INTERVAL_SEC = float(os.getenv("DWELL_TRACKER_INTERVAL_SEC", "1.0"))
+dwell_tracker_last_run = defaultdict(lambda: datetime.min)
+
 # Replace the global variable with a dictionary to track per-camera detections
 detected_objects_this_session = {}  # Changed from set() to dict()
 
@@ -595,11 +598,13 @@ def process_frame(frame, result, camera_id):
                 logging.error(f"Error in process_frame inner try: {str(e)}")
                 return frame, None  # Return original frame on error
 
+            frame_timestamp = datetime.utcnow()
+
             try:
                 zone_presence_engine.process_detections(
                     camera_id=camera_id,
                     detections=zone_detections,
-                    timestamp=datetime.utcnow(),
+                    timestamp=frame_timestamp,
                 )
                 zones = zone_cache.get_for_camera(camera_id)
                 live_snapshot = zone_presence_engine.live_snapshot()
@@ -626,10 +631,20 @@ def process_frame(frame, result, camera_id):
             except Exception as zone_err:
                 logging.error(f"Zone overlay error for camera {camera_id}: {zone_err}")
 
-            try:
-                dwell_tracker.process_frame(camera_id=camera_id, frame=frame, timestamp=datetime.utcnow())
-            except Exception as dwell_err:
-                logging.error(f"Dwell tracker error for camera {camera_id}: {dwell_err}")
+            should_run_dwell = False
+            if DWELL_TRACKER_INTERVAL_SEC <= 0:
+                should_run_dwell = True
+            else:
+                last_run = dwell_tracker_last_run[camera_id]
+                if (frame_timestamp - last_run).total_seconds() >= DWELL_TRACKER_INTERVAL_SEC:
+                    should_run_dwell = True
+                    dwell_tracker_last_run[camera_id] = frame_timestamp
+
+            if should_run_dwell:
+                try:
+                    dwell_tracker.process_frame(camera_id=camera_id, frame=frame, timestamp=frame_timestamp)
+                except Exception as dwell_err:
+                    logging.error(f"Dwell tracker error for camera {camera_id}: {dwell_err}")
 
             return annotated_frame, alert
         except Exception as e:
